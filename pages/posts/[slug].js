@@ -8,10 +8,56 @@ import Layout from '../../components/layout'
 import PostTitle from '../../components/post-title'
 import Head from 'next/head'
 import { CMS_NAME } from '../../lib/constants'
-import markdownToHtml from '../../lib/markdownToHtml'
 import { fetchGraphql } from 'react-tinacms-strapi'
+import { InlineForm } from "react-tinacms-inline";
 
-export default function Post({ post, morePosts, preview }) {
+import { useCMS, useForm, usePlugin } from "tinacms";
+
+export default function Post({ post: initialPost, preview }) {
+  const cms = useCMS();
+  const formConfig = {
+    id: initialPost.id,
+    label: 'Blog Post',
+    initialValues: initialPost,
+    onSubmit: async (values) => {
+      const saveMutation = `
+      mutation UpdateBlogPost(
+        $id: ID!
+        $title: String
+        $content: String
+        $coverImageId: ID
+      ) {
+        updateBlogPost(
+          input: {
+            where: { id: $id }
+            data: { title: $title, content: $content, coverImage: $coverImageId}
+          }
+        ) {
+          blogPost {
+            id
+          }
+        }
+      }`;
+      const response = await cms.api.strapi.fetchGraphql(
+        saveMutation,
+        {
+          id: values.id,
+          title: values.title,
+          content: values.content,
+          coverImageId: values.coverImage.id,
+        }
+      );
+      if (response.data) {
+        cms.alerts.success("Changes Saved");
+      } else {
+        cms.alerts.error("Error saving changes");
+      }
+    },
+    fields: [],
+  }
+  const [post, form] = useForm(formConfig)
+  usePlugin(form)
+
   const router = useRouter()
   if (!router.isFallback && !post?.slug) {
     return <ErrorPage statusCode={404} />
@@ -31,13 +77,16 @@ export default function Post({ post, morePosts, preview }) {
                 </title>
                 <meta property="og:image" content={process.env.STRAPI_URL + post.coverImage.url} />
               </Head>
-              <PostHeader
-                title={post.title}
-                coverImage={process.env.STRAPI_URL + post.coverImage.url}
-                date={post.date}
-                author={post.author}
-              />
-              <PostBody content={post.content} />
+              <InlineForm form={form} initialStatus={"active"}>
+                <PostHeader
+                  title={post.title}
+                  coverImage={process.env.STRAPI_URL + post.coverImage.url}
+                  date={post.date}
+                  author={post.author}
+                />
+                <PostBody content={post.content} />
+              </InlineForm>
+              
             </article>
           </>
         )}
@@ -46,7 +95,7 @@ export default function Post({ post, morePosts, preview }) {
   )
 }
 
-export async function getStaticProps({ params }) {
+export async function getStaticProps({ params, preview, previewData }) {
   const postResults = await fetchGraphql(
     process.env.STRAPI_URL,
     `
@@ -72,17 +121,26 @@ export async function getStaticProps({ params }) {
   );
 
   const post = postResults.data.blogPosts[0]
-  const content = await markdownToHtml(post.content || '')
+
+  if (preview) {
+    return {
+      props: {
+        post: {
+          ...post
+        },
+        preview,
+        ...previewData,
+      },
+    };
+  }
 
   return {
     props: {
       post: {
         ...post,
-        content,
       },
     },
   }
-
 }
 
 export async function getStaticPaths() {
